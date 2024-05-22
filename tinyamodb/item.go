@@ -27,22 +27,28 @@ type Item interface {
 var (
 	ErrNotFoundPartitionKey    = errors.New("not found partition key")
 	ErrInvalidPartitionKeyType = errors.New("partition key must be 'string' type")
+	ErrNotFoundSortKey         = errors.New("not found sort key")
+	ErrInvalidSortKeyType      = errors.New("partition key must be 'string' or 'number' type")
 	ErrCannotUnmarshal         = errors.New("cannot unmarshal")
 )
 
 type tinyamodbItem struct {
 	sha256Key    []byte
 	strSha256Key string
+	sortKey      types.AttributeValue
 	Item         map[string]types.AttributeValue
 	UnixNano     int64
 }
 
 func NewTinyamoDbItem(item map[string]types.AttributeValue, c Config) (*tinyamodbItem, error) {
 	var av types.AttributeValue
+	var sav types.AttributeValue
 	for key, v := range item {
 		if key == c.Table.PartitionKey {
 			av = v
-			break
+		}
+		if key == c.Table.SortKey {
+			sav = v
 		}
 	}
 	if av == nil {
@@ -52,10 +58,21 @@ func NewTinyamoDbItem(item map[string]types.AttributeValue, c Config) (*tinyamod
 	if !ok {
 		return nil, ErrInvalidPartitionKeyType
 	}
+	if c.Table.SortKey != "" {
+		if sav == nil {
+			return nil, ErrNotFoundSortKey
+		}
+		switch (sav).(type) {
+		case *types.AttributeValueMemberS, *types.AttributeValueMemberN:
+		default:
+			return nil, ErrInvalidSortKeyType
+		}
+	}
 	key, strKey := sum256([]byte(avs.Value))
 	return &tinyamodbItem{
 		sha256Key:    key,
 		strSha256Key: strKey,
+		sortKey:      sav,
 		Item:         item,
 		UnixNano:     time.Now().UnixNano(),
 	}, nil

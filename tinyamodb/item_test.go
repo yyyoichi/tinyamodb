@@ -10,6 +10,41 @@ import (
 )
 
 func TestItem(t *testing.T) {
+	t.Run("new tinyamodb", func(t *testing.T) {
+		test := []struct {
+			item               map[string]types.AttributeValue
+			configPK, configSK string
+			expErr             error
+		}{
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberS{Value: "fuga"}}, "pk", "sk", nil},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "sk", nil},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", nil},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", nil},
+			{map[string]types.AttributeValue{
+				"k": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", ErrNotFoundPartitionKey},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "", ErrInvalidPartitionKeyType},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "sk", ErrNotFoundSortKey},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberBOOL{Value: true}}, "pk", "sk", ErrInvalidSortKeyType},
+		}
+		for _, tt := range test {
+			var c Config
+			c.Table.PartitionKey = tt.configPK
+			c.Table.SortKey = tt.configSK
+			_, err := NewTinyamoDbItem(tt.item, c)
+			require.ErrorIs(t, err, tt.expErr)
+		}
+	})
+
 	var e encoder
 	var d decoder
 

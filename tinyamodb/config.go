@@ -10,5 +10,6 @@ type Config struct {
 	}
 	Table struct {
 		PartitionKey string
+		SortKey      string
 	}
 }
