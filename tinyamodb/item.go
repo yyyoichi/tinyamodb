@@ -27,10 +27,107 @@ type Item interface {
 var (
 	ErrNotFoundPartitionKey    = errors.New("not found partition key")
 	ErrInvalidPartitionKeyType = errors.New("partition key must be 'string' type")
+	ErrEmptyPartitionKey       = errors.New("partition key is empty")
 	ErrNotFoundSortKey         = errors.New("not found sort key")
 	ErrInvalidSortKeyType      = errors.New("partition key must be 'string' or 'number' type")
+	ErrEmptySortKey            = errors.New("sort key is empty")
 	ErrCannotUnmarshal         = errors.New("cannot unmarshal")
 )
+
+type item struct {
+	pk       types.AttributeValue
+	pkSHA256 string
+	Pk4bit   uint32
+	sk       types.AttributeValue
+	skSHA256 string
+	unixNano int64
+	Item     map[string]types.AttributeValue
+}
+
+func newItem(avm map[string]types.AttributeValue, c Config) (*item, error) {
+	var i = &item{
+		Item:     avm,
+		unixNano: time.Now().UnixNano(),
+	}
+	for key, v := range i.Item {
+		if key == c.Table.PartitionKey {
+			i.pk = v
+		}
+		if key == c.Table.SortKey {
+			i.sk = v
+		}
+	}
+	if i.pk == nil {
+		return nil, ErrNotFoundPartitionKey
+	}
+	var pk []byte
+	if av, ok := (i.pk).(*types.AttributeValueMemberS); !ok {
+		return nil, ErrInvalidPartitionKeyType
+	} else {
+		pk = []byte(av.Value)
+	}
+	if len(pk) == 0 {
+		return nil, ErrEmptyPartitionKey
+	}
+	var partitionKey []byte
+	partitionKey, i.pkSHA256 = sum256(pk)
+	i.Pk4bit = binary.BigEndian.Uint32(partitionKey[:4])
+
+	if c.Table.SortKey != "" {
+		if i.sk == nil {
+			return nil, ErrNotFoundSortKey
+		}
+		var sk []byte
+		switch av := (i.sk).(type) {
+		case *types.AttributeValueMemberN:
+			sk = []byte(av.Value)
+
+		case *types.AttributeValueMemberS:
+			sk = []byte(av.Value)
+
+		default:
+			return nil, ErrInvalidSortKeyType
+		}
+		if len(sk) == 0 {
+			return nil, ErrEmptySortKey
+		}
+		_, i.skSHA256 = sum256(sk)
+	}
+	return i, nil
+}
+
+func (i *item) PrimaryKey() string {
+	if i.skSHA256 != "" {
+		return i.skSHA256
+	}
+	return i.skSHA256
+}
+
+func (i *item) Value() ([]byte, error) {
+	var buf = new(bytes.Buffer)
+	var e encoder
+	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.unixNano, buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (i *item) Unmarshal(data []byte) error {
+	var r = bytes.NewReader(data)
+	var d decoder
+	av, unixNano, err := d.Decode(r)
+	if err != nil {
+		return err
+	}
+	i.unixNano = unixNano
+	avm, ok := av.(*types.AttributeValueMemberM)
+	if !ok {
+		return err
+	}
+	i.Item = avm.Value
+	return nil
+}
 
 type tinyamodbItem struct {
 	sha256Key    []byte
