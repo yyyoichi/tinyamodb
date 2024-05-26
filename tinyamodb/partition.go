@@ -40,13 +40,13 @@ func newPartition(dir string, id int, c Config) (*partition, error) {
 	return p, p.setup()
 }
 
-func (p *partition) Put(item Item) (old Item, err error) {
+func (p *partition) Put(item *item) (old *item, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return nil, p.write(item)
 }
 
-func (p *partition) Read(item Item) error {
+func (p *partition) Read(item *item) error {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -54,11 +54,11 @@ func (p *partition) Read(item Item) error {
 	return err
 }
 
-func (p *partition) Delete(item Item) (Item, error) {
+func (p *partition) Delete(item *item) (*item, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	key := item.StrSHA2526Key()
+	key := item.PrimaryKey()
 	for _, s := range p.segments {
 		if err := s.Delete(key); err != nil {
 			return nil, err
@@ -79,8 +79,8 @@ func (p *partition) Close() error {
 	return nil
 }
 
-func (p *partition) read(item Item) (*segment, error) {
-	key := item.StrSHA2526Key()
+func (p *partition) read(item *item) (*segment, error) {
+	key := item.PrimaryKey()
 
 	for _, s := range p.segments {
 		data, _ := s.Read(key)
@@ -90,17 +90,19 @@ func (p *partition) read(item Item) (*segment, error) {
 			}
 		}
 	}
+	item.Item = nil
+	item.UnixNano = 0
 	return nil, io.EOF
 }
 
-func (p *partition) write(item Item) error {
+func (p *partition) write(item *item) error {
 	if p.activeSegment.IsMaxed() {
 		if err := p.newSegment(0); err != nil {
 			return err
 		}
 	}
 
-	key := item.StrSHA2526Key()
+	key := item.PrimaryKey()
 	data, err := item.Value()
 	if err != nil {
 		return err

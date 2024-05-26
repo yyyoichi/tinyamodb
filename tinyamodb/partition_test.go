@@ -20,7 +20,7 @@ func TestPartition(t *testing.T) {
 	p, err := newPartition(dir, PARTITION_ID, c)
 	require.NoError(t, err)
 
-	want0, err := NewTinyamoDbItem(map[string]types.AttributeValue{
+	want0, err := newItem(map[string]types.AttributeValue{
 		"key":   &types.AttributeValueMemberS{Value: "key0"},
 		"value": &types.AttributeValueMemberN{Value: "0"},
 	}, c)
@@ -28,7 +28,7 @@ func TestPartition(t *testing.T) {
 	_, err = p.Put(want0)
 	require.NoError(t, err)
 
-	want1, err := NewTinyamoDbItem(map[string]types.AttributeValue{
+	want1, err := newItem(map[string]types.AttributeValue{
 		"key":   &types.AttributeValueMemberS{Value: "key1"},
 		"value": &types.AttributeValueMemberN{Value: "1"},
 	}, c)
@@ -37,7 +37,7 @@ func TestPartition(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, len(p.segments))
 
-	got0, err := NewTinyamoDbItem(map[string]types.AttributeValue{
+	got0, err := newItem(map[string]types.AttributeValue{
 		"key": &types.AttributeValueMemberS{Value: "key0"},
 	}, c)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestPartition(t *testing.T) {
 	require.Equal(t, want0.UnixNano, got0.UnixNano)
 
 	// not found
-	got2, err := NewTinyamoDbItem(map[string]types.AttributeValue{
+	got2, err := newItem(map[string]types.AttributeValue{
 		"key": &types.AttributeValueMemberS{Value: "key2"},
 	}, c)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestPartition(t *testing.T) {
 	require.NoError(t, err)
 
 	// overwrite
-	got0, _ = NewTinyamoDbItem(map[string]types.AttributeValue{
+	got0, _ = newItem(map[string]types.AttributeValue{
 		"key":   &types.AttributeValueMemberS{Value: "key0"},
 		"value": &types.AttributeValueMemberN{Value: "0"},
 	}, c)

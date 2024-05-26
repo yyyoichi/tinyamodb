@@ -10,7 +10,7 @@ import (
 )
 
 func TestItem(t *testing.T) {
-	t.Run("new tinyamodb", func(t *testing.T) {
+	t.Run("new item", func(t *testing.T) {
 		test := []struct {
 			item               map[string]types.AttributeValue
 			configPK, configSK string
@@ -29,18 +29,23 @@ func TestItem(t *testing.T) {
 			{map[string]types.AttributeValue{
 				"k": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", ErrNotFoundPartitionKey},
 			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: ""}}, "pk", "", ErrEmptyPartitionKey},
+			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "", ErrInvalidPartitionKeyType},
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "sk", ErrNotFoundSortKey},
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: "hoge"},
 				"sk": &types.AttributeValueMemberBOOL{Value: true}}, "pk", "sk", ErrInvalidSortKeyType},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberS{Value: ""}}, "pk", "sk", ErrEmptySortKey},
 		}
 		for _, tt := range test {
 			var c Config
 			c.Table.PartitionKey = tt.configPK
 			c.Table.SortKey = tt.configSK
-			_, err := NewTinyamoDbItem(tt.item, c)
+			_, err := newItem(tt.item, c)
 			require.ErrorIs(t, err, tt.expErr)
 		}
 	})

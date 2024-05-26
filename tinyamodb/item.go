@@ -40,14 +40,14 @@ type item struct {
 	Pk4bit   uint32
 	sk       types.AttributeValue
 	skSHA256 string
-	unixNano int64
+	UnixNano int64
 	Item     map[string]types.AttributeValue
 }
 
 func newItem(avm map[string]types.AttributeValue, c Config) (*item, error) {
 	var i = &item{
 		Item:     avm,
-		unixNano: time.Now().UnixNano(),
+		UnixNano: time.Now().UnixNano(),
 	}
 	for key, v := range i.Item {
 		if key == c.Table.PartitionKey {
@@ -100,13 +100,13 @@ func (i *item) PrimaryKey() string {
 	if i.skSHA256 != "" {
 		return i.skSHA256
 	}
-	return i.skSHA256
+	return i.pkSHA256
 }
 
 func (i *item) Value() ([]byte, error) {
 	var buf = new(bytes.Buffer)
 	var e encoder
-	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.unixNano, buf)
+	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.UnixNano, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (i *item) Unmarshal(data []byte) error {
 	if err != nil {
 		return err
 	}
-	i.unixNano = unixNano
+	i.UnixNano = unixNano
 	avm, ok := av.(*types.AttributeValueMemberM)
 	if !ok {
 		return err

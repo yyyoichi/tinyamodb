@@ -2,7 +2,6 @@ package tinyamodb
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -83,34 +82,28 @@ func (db *Db) Close() error {
 }
 
 func (db *Db) GetItem(ctx context.Context, input *GetItemInput) (*GetItemOutput, error) {
-	item, err := NewTinyamoDbItem(input.Key, db.c)
+	item, err := newItem(input.Key, db.c)
 	if err != nil {
 		return nil, err
 	}
-	p := db.determinePartition(item.sha256Key)
+	p := db.determinePartition(item)
 
-	output := &tinyamodbItem{
-		sha256Key:    item.sha256Key,
-		strSha256Key: item.strSha256Key,
-		UnixNano:     0,
-		Item:         nil,
-	}
-	err = p.Read(output)
+	err = p.Read(item)
 	if err != nil && !errors.Is(err, io.EOF) {
 		if errors.Is(err, io.EOF) {
 			return &GetItemOutput{Item: nil}, nil
 		}
 		return nil, err
 	}
-	return &GetItemOutput{Item: output.Item}, nil
+	return &GetItemOutput{Item: item.Item}, nil
 }
 
 func (db *Db) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutput, error) {
-	item, err := NewTinyamoDbItem(input.Item, db.c)
+	item, err := newItem(input.Item, db.c)
 	if err != nil {
 		return nil, err
 	}
-	p := db.determinePartition(item.sha256Key)
+	p := db.determinePartition(item)
 	_, err = p.Put(item)
 	if err != nil {
 		return nil, err
@@ -119,11 +112,11 @@ func (db *Db) PutItem(ctx context.Context, input *PutItemInput) (*PutItemOutput,
 }
 
 func (db *Db) DeleteItem(ctx context.Context, input *DeleteItemInput) (*DeleteItemOutput, error) {
-	item, err := NewTinyamoDbItem(input.Key, db.c)
+	item, err := newItem(input.Key, db.c)
 	if err != nil {
 		return nil, err
 	}
-	p := db.determinePartition(item.sha256Key)
+	p := db.determinePartition(item)
 	_, err = p.Delete(item)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
@@ -131,9 +124,8 @@ func (db *Db) DeleteItem(ctx context.Context, input *DeleteItemInput) (*DeleteIt
 	return &DeleteItemOutput{}, nil
 }
 
-func (db *Db) determinePartition(sha256key []byte) *partition {
-	v := binary.BigEndian.Uint32(sha256key[:4])
-	id := int(v) % len(db.partitions)
+func (db *Db) determinePartition(item *item) *partition {
+	id := int(item.Pk4bit) % len(db.partitions)
 	// partition id start with 1
 	return db.partitions[id+1]
 }
