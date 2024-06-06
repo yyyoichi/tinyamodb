@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/google/btree"
 )
 
 type bptreeInterface interface {
@@ -35,7 +37,7 @@ type bptreeIndex struct {
 	dir    string
 	config Config
 
-	tree bptreeInterface
+	tree *btree.BTree
 
 	activeStore *store
 	stores      []*store
