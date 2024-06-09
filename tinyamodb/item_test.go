@@ -143,12 +143,18 @@ func TestItem(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				var b = new(bytes.Buffer)
 				var unixNano = time.Now().UnixNano()
-				err := e.Encode(tt, unixNano, b)
+				var bt byte = 'a'
+				var e = newEncoder(prefixInt64EncOption(unixNano), prefixByteEncOption(bt))
+				err := e.Encode(tt, b)
 				require.NoError(t, err)
-				got, gotUnixNano, err := d.Decode(b)
+				var gotUnixNano int64
+				var gotBt byte
+				var d = newDecoder(prefixInt64DecOption(&gotUnixNano), prefixByteDecOption(&gotBt))
+				got, err := d.Decode(b)
 				require.NoError(t, err)
 				require.Equal(t, tt, got)
 				require.Equal(t, gotUnixNano, unixNano)
+				require.Equal(t, gotBt, bt)
 			})
 		}
 	})

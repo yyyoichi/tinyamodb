@@ -105,8 +105,8 @@ func (i *item) PrimaryKey() string {
 
 func (i *item) Value() ([]byte, error) {
 	var buf = new(bytes.Buffer)
-	var e encoder
-	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.UnixNano, buf)
+	var e = newEncoder(prefixInt64EncOption(i.UnixNano))
+	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -115,92 +115,14 @@ func (i *item) Value() ([]byte, error) {
 
 func (i *item) Unmarshal(data []byte) error {
 	var r = bytes.NewReader(data)
-	var d decoder
-	av, unixNano, err := d.Decode(r)
+	var d = newDecoder(prefixInt64DecOption(&i.UnixNano))
+	av, err := d.Decode(r)
 	if err != nil {
 		return err
 	}
-	i.UnixNano = unixNano
 	avm, ok := av.(*types.AttributeValueMemberM)
 	if !ok {
-		return err
-	}
-	i.Item = avm.Value
-	return nil
-}
-
-type tinyamodbItem struct {
-	sha256Key    []byte
-	strSha256Key string
-	sortKey      types.AttributeValue
-	Item         map[string]types.AttributeValue
-	UnixNano     int64
-}
-
-func NewTinyamoDbItem(item map[string]types.AttributeValue, c Config) (*tinyamodbItem, error) {
-	var av types.AttributeValue
-	var sav types.AttributeValue
-	for key, v := range item {
-		if key == c.Table.PartitionKey {
-			av = v
-		}
-		if key == c.Table.SortKey {
-			sav = v
-		}
-	}
-	if av == nil {
-		return nil, ErrNotFoundPartitionKey
-	}
-	avs, ok := (av).(*types.AttributeValueMemberS)
-	if !ok {
-		return nil, ErrInvalidPartitionKeyType
-	}
-	if c.Table.SortKey != "" {
-		if sav == nil {
-			return nil, ErrNotFoundSortKey
-		}
-		switch (sav).(type) {
-		case *types.AttributeValueMemberS, *types.AttributeValueMemberN:
-		default:
-			return nil, ErrInvalidSortKeyType
-		}
-	}
-	key, strKey := sum256([]byte(avs.Value))
-	return &tinyamodbItem{
-		sha256Key:    key,
-		strSha256Key: strKey,
-		sortKey:      sav,
-		Item:         item,
-		UnixNano:     time.Now().UnixNano(),
-	}, nil
-}
-
-func (i *tinyamodbItem) SHA256Key() []byte {
-	return i.sha256Key
-}
-func (i *tinyamodbItem) StrSHA2526Key() string {
-	return i.strSha256Key
-}
-func (i *tinyamodbItem) Value() ([]byte, error) {
-	var buf = new(bytes.Buffer)
-	var e encoder
-	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.UnixNano, buf)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-func (i *tinyamodbItem) Unmarshal(data []byte) error {
-	var r = bytes.NewReader(data)
-	var d decoder
-	av, unixNano, err := d.Decode(r)
-	if err != nil {
-		return err
-	}
-	i.UnixNano = unixNano
-	avm, ok := av.(*types.AttributeValueMemberM)
-	if !ok {
-		return err
+		return ErrCannotUnmarshal
 	}
 	i.Item = avm.Value
 	return nil
@@ -219,11 +141,34 @@ const (
 	_bm = byte('m') // map
 )
 
-type encoder struct{}
+type encoder struct {
+	options []encodeOption
+}
 
-func (e *encoder) Encode(av types.AttributeValue, unixNano int64, w io.Writer) error {
-	if err := binary.Write(w, enc, uint64(unixNano)); err != nil {
+func newEncoder(opts ...encodeOption) encoder {
+	return encoder{options: opts}
+}
+
+type encodeOption func(io.Writer) error
+
+func prefixInt64EncOption(tm int64) encodeOption {
+	return func(w io.Writer) error {
+		return binary.Write(w, enc, uint64(tm))
+	}
+}
+
+func prefixByteEncOption(bt byte) encodeOption {
+	return func(w io.Writer) error {
+		_, err := w.Write([]byte{bt})
 		return err
+	}
+}
+
+func (e *encoder) Encode(av types.AttributeValue, w io.Writer) error {
+	for _, opt := range e.options {
+		if err := opt(w); err != nil {
+			return err
+		}
 	}
 	return e.encode(av, w)
 }
@@ -372,15 +317,51 @@ func (e *encoder) encodeMap(v map[string]types.AttributeValue, w io.Writer) erro
 	return nil
 }
 
-type decoder struct{}
+type decoder struct {
+	options []decodeOption
+}
 
-func (d *decoder) Decode(r io.Reader) (types.AttributeValue, int64, error) {
-	var unixNanoB = make([]byte, 8)
-	if _, err := r.Read(unixNanoB); err != nil {
-		return nil, 0, err
+func newDecoder(opts ...decodeOption) decoder {
+	return decoder{options: opts}
+}
+
+type decodeOption func(r io.Reader) error
+
+func prefixInt64DecOption(n *int64) decodeOption {
+	return func(r io.Reader) error {
+		if n == nil {
+			panic("n is nil")
+		}
+		var b8 = make([]byte, 8)
+		if _, err := r.Read(b8); err != nil {
+			return err
+		}
+		*n = int64(enc.Uint64(b8))
+		return nil
 	}
-	av, err := d.decode(r)
-	return av, int64(enc.Uint64(unixNanoB)), err
+}
+
+func prefixByteDecOption(bt *byte) decodeOption {
+	return func(r io.Reader) error {
+		if bt == nil {
+			panic("bt is nil")
+		}
+		var b1 = make([]byte, 1)
+		if _, err := r.Read(b1); err != nil {
+			return err
+		}
+		*bt = b1[0]
+		return nil
+	}
+}
+
+func (d *decoder) Decode(r io.Reader) (types.AttributeValue, error) {
+	for _, opt := range d.options {
+		if err := opt(r); err != nil {
+			return nil, err
+		}
+	}
+	return d.decode(r)
 }
 
 func (d *decoder) decode(r io.Reader) (types.AttributeValue, error) {
