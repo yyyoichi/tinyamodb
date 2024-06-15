@@ -1,6 +1,7 @@
 package tinyamodb
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -47,6 +48,12 @@ func testRead(t *testing.T, s *store) {
 		require.Equal(t, write, read)
 		pos += width
 	}
+	var count int
+	for read := range s.ReadAll(context.Background(), func(err error) { require.NoError(t, err) }) {
+		require.Equal(t, write, read.data)
+		count++
+	}
+	require.Equal(t, 3, count)
 }
 
 func testReadAt(t *testing.T, s *store) {

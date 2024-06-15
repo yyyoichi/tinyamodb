@@ -1,6 +1,8 @@
 package tinyamodb
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/btree"
 )
 
@@ -26,17 +29,20 @@ type bptreeIndex struct {
 	dir    string
 	config Config
 
-	tree *btree.BTreeG[btreeItem]
+	tree *btree.BTreeG[*btreeItem]
 
-	activeStore *store
-	stores      []*store
+	activeStore *bstore
+	stores      []*bstore
 }
 
 func newBptreeIndex(dir string, sortKey string, c Config) (*bptreeIndex, error) {
+	if c.Segment.MaxStoreBytes == 0 {
+		c.Segment.MaxStoreBytes = 1024
+	}
 	bi := &bptreeIndex{
 		dir:    fmt.Sprintf("%s/%s", dir, sortKey),
 		config: c,
-		tree:   btree.NewG(10, func(a, b btreeItem) bool { return a.rawSk < b.rawSk }),
+		tree:   btree.NewG(10, func(a, b *btreeItem) bool { return a.rawSk < b.rawSk }),
 	}
 	if _, err := os.Stat(bi.dir); err != nil {
 		if err = os.Mkdir(bi.dir, 0755); err != nil {
@@ -46,7 +52,7 @@ func newBptreeIndex(dir string, sortKey string, c Config) (*bptreeIndex, error) 
 	return bi, bi.setup()
 }
 
-func (bi *bptreeIndex) getStore(id int64) *store {
+func (bi *bptreeIndex) getStore(id int64) *bstore {
 	return bi.stores[id-1]
 }
 
@@ -82,6 +88,19 @@ func (bi *bptreeIndex) setup() error {
 			return nil
 		}
 	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	for i, store := range bi.stores {
+		storeId := i + 1
+		for item := range store.ReadBtreeItem(ctx, func(err error) { cancel(err) }) {
+			if item.rawPk == "" {
+				continue
+			}
+			item.storeId = int64(storeId)
+			_, _ = bi.tree.ReplaceOrInsert(item)
+		}
+	}
 	return nil
 }
 
@@ -101,9 +120,97 @@ func (bi *bptreeIndex) newStore(storeId int64) error {
 	if err != nil {
 		return err
 	}
-	bi.stores = append(bi.stores, s)
+	bs := &bstore{s}
+	bi.stores = append(bi.stores, bs)
 	if s.size < bi.config.Segment.MaxStoreBytes {
-		bi.activeStore = s
+		bi.activeStore = bs
 	}
+	return nil
+}
+
+const (
+	treeFlagWidth = 1
+)
+
+type bstore struct {
+	*store
+}
+
+func (s *bstore) Delete(pos uint64) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.buf.Flush(); err != nil {
+		return nil, err
+	}
+
+	f := []byte{'1'}
+	if _, err := s.File.WriteAt(f, int64(pos+treeFlagWidth)); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (s *bstore) ReadBtreeItem(ctx context.Context, errHandle func(err error)) <-chan *btreeItem {
+	dataCh := s.ReadAll(ctx, errHandle)
+	ch := make(chan *btreeItem)
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data := <-dataCh:
+				var item = &btreeItem{
+					storeOffset: int64(data.pos),
+				}
+				if err := item.Unmarshal(data.data); err != nil {
+					errHandle(err)
+				}
+				ch <- item
+			}
+		}
+	}()
+	return ch
+}
+
+func (i *btreeItem) Value() ([]byte, error) {
+	av := &types.AttributeValueMemberM{
+		Value: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: i.rawPk},
+			"sk": &types.AttributeValueMemberS{Value: i.rawSk},
+			"sg": &types.AttributeValueMemberN{Value: strconv.Itoa(int(i.segmentId))},
+		},
+	}
+	var buf = new(bytes.Buffer)
+	var e = newEncoder(prefixByteEncOption('0'))
+	err := e.Encode(av, buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (i *btreeItem) Unmarshal(data []byte) error {
+	var r = bytes.NewReader(data)
+	var f byte
+	var d = newDecoder(prefixByteDecOption(&f))
+	av, err := d.Decode(r)
+	if err != nil {
+		return err
+	}
+	if f == '1' {
+		return nil
+	}
+	avm, ok := av.(*types.AttributeValueMemberM)
+	if !ok {
+		return ErrCannotUnmarshal
+	}
+	pk := avm.Value["pk"].(*types.AttributeValueMemberS)
+	i.rawPk = pk.Value
+	sk := avm.Value["sk"].(*types.AttributeValueMemberS)
+	i.rawSk = sk.Value
+	sg := avm.Value["sg"].(*types.AttributeValueMemberN)
+	sgId, _ := strconv.Atoi(sg.Value)
+	i.segmentId = int64(sgId)
 	return nil
 }
