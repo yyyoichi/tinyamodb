@@ -16,15 +16,7 @@ import (
 	"github.com/google/btree"
 )
 
-type btreeItem struct {
-	rawSk       string // sort key value
-	rawPk       string // partition key value
-	segmentId   int64  // index
-	storeId     int64  // itself
-	storeOffset int64  // itself
-}
-
-type bptreeIndex struct {
+type btreeIndex struct {
 	mu     sync.RWMutex
 	dir    string
 	config Config
@@ -35,11 +27,11 @@ type bptreeIndex struct {
 	stores      []*bstore
 }
 
-func newBptreeIndex(dir string, sortKey string, c Config) (*bptreeIndex, error) {
+func newBtreeIndex(dir string, sortKey string, c Config) (*btreeIndex, error) {
 	if c.Segment.MaxStoreBytes == 0 {
 		c.Segment.MaxStoreBytes = 1024
 	}
-	bi := &bptreeIndex{
+	bi := &btreeIndex{
 		dir:    fmt.Sprintf("%s/%s", dir, sortKey),
 		config: c,
 		tree:   btree.NewG(10, func(a, b *btreeItem) bool { return a.rawSk < b.rawSk }),
@@ -52,16 +44,16 @@ func newBptreeIndex(dir string, sortKey string, c Config) (*bptreeIndex, error) 
 	return bi, bi.setup()
 }
 
-func (bi *bptreeIndex) getStore(id int64) *bstore {
+func (bi *btreeIndex) getStore(id int64) *bstore {
 	return bi.stores[id-1]
 }
 
-func (bi *bptreeIndex) setup() error {
+func (bi *btreeIndex) setup() error {
 	files, err := os.ReadDir(bi.dir)
 	if err != nil {
 		return err
 	}
-	storeId := make([]int64, 0, len(files))
+	storeIds := make([]int64, 0, len(files))
 	for _, file := range files {
 		if file.IsDir() {
 			continue
@@ -70,15 +62,15 @@ func (bi *bptreeIndex) setup() error {
 			file.Name(),
 			path.Ext(file.Name()),
 		)
-		bStoreId, _ := strconv.Atoi(strbStoreId)
-		if bStoreId == 0 {
+		storeId, _ := strconv.Atoi(strbStoreId)
+		if storeId == 0 {
 			continue
 		}
 
-		storeId = append(storeId, int64(bStoreId))
+		storeIds = append(storeIds, int64(storeId))
 	}
-	slices.Sort(storeId)
-	for _, id := range storeId {
+	slices.Sort(storeIds)
+	for _, id := range storeIds {
 		if err := bi.newStore(id); err != nil {
 			return err
 		}
@@ -104,7 +96,7 @@ func (bi *bptreeIndex) setup() error {
 	return nil
 }
 
-func (bi *bptreeIndex) newStore(storeId int64) error {
+func (bi *btreeIndex) newStore(storeId int64) error {
 	if storeId == 0 {
 		storeId = int64(len(bi.stores) + 1)
 	}
@@ -161,7 +153,7 @@ func (s *bstore) ReadBtreeItem(ctx context.Context, errHandle func(err error)) <
 				return
 			case data := <-dataCh:
 				var item = &btreeItem{
-					storeOffset: int64(data.pos),
+					storePos: data.pos,
 				}
 				if err := item.Unmarshal(data.data); err != nil {
 					errHandle(err)
@@ -171,6 +163,14 @@ func (s *bstore) ReadBtreeItem(ctx context.Context, errHandle func(err error)) <
 		}
 	}()
 	return ch
+}
+
+type btreeItem struct {
+	rawSk     string // sort key value
+	rawPk     string // partition key value
+	segmentId int64  // index
+	storeId   int64  // itself
+	storePos  uint64 // itself
 }
 
 func (i *btreeItem) Value() ([]byte, error) {
