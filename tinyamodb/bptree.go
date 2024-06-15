@@ -13,31 +13,20 @@ import (
 	"github.com/google/btree"
 )
 
-type bptreeInterface interface {
-}
-type bptreeItemInterface interface {
-	Less(than bptreeItemInterface) bool
-}
-
 type btreeItem struct {
-	rawSk     string // sort key value
-	segmentId int64  // index
-	offset    int32  // index
-
-	less func(than bptreeItemInterface) bool
-
-	storeId     int64 // itself
-	storeOffset int64 // itself
+	rawSk       string // sort key value
+	rawPk       string // partition key value
+	segmentId   int64  // index
+	storeId     int64  // itself
+	storeOffset int64  // itself
 }
-
-func (i *btreeItem) Less(than bptreeItemInterface) bool { return i.less(than) }
 
 type bptreeIndex struct {
 	mu     sync.RWMutex
 	dir    string
 	config Config
 
-	tree *btree.BTree
+	tree *btree.BTreeG[btreeItem]
 
 	activeStore *store
 	stores      []*store
@@ -47,6 +36,7 @@ func newBptreeIndex(dir string, sortKey string, c Config) (*bptreeIndex, error) 
 	bi := &bptreeIndex{
 		dir:    fmt.Sprintf("%s/%s", dir, sortKey),
 		config: c,
+		tree:   btree.NewG(10, func(a, b btreeItem) bool { return a.rawSk < b.rawSk }),
 	}
 	if _, err := os.Stat(bi.dir); err != nil {
 		if err = os.Mkdir(bi.dir, 0755); err != nil {
