@@ -31,10 +31,18 @@ func newBtreeIndex(dir string, sortKey string, c Config) (*btreeIndex, error) {
 	if c.Segment.MaxStoreBytes == 0 {
 		c.Segment.MaxStoreBytes = 1024
 	}
+	if c.Partition.IndexDgree == 0 {
+		c.Partition.IndexDgree = 3
+	}
 	bi := &btreeIndex{
 		dir:    fmt.Sprintf("%s/%s", dir, sortKey),
 		config: c,
-		tree:   btree.NewG(10, func(a, b *btreeItem) bool { return a.rawSk < b.rawSk }),
+		tree: btree.NewG(c.Partition.IndexDgree, func(a, b *btreeItem) bool {
+			if a.rawPk < b.rawPk {
+				return true
+			}
+			return a.rawSk < b.rawSk
+		}),
 	}
 	if _, err := os.Stat(bi.dir); err != nil {
 		if err = os.Mkdir(bi.dir, 0755); err != nil {
@@ -42,6 +50,68 @@ func newBtreeIndex(dir string, sortKey string, c Config) (*btreeIndex, error) {
 		}
 	}
 	return bi, bi.setup()
+}
+
+func (bi *btreeIndex) Append(pk, sk string, segId int64) error {
+	bi.mu.Lock()
+	defer bi.mu.Unlock()
+
+	var item = &btreeItem{
+		rawPk:     pk,
+		rawSk:     sk,
+		segmentId: segId,
+	}
+	var old *btreeItem
+	roolback := func(err error) error {
+		if err != nil && old != nil {
+			_, _ = bi.tree.ReplaceOrInsert(old)
+		}
+		return err
+	}
+	if old, _ = bi.tree.ReplaceOrInsert(item); old != nil {
+		// delete the old item from bstore
+		s := bi.getStore(old.storeId)
+		_, err := s.Delete(old.storePos)
+		if err != nil {
+			return roolback(err)
+		}
+	}
+	if bi.activeStore.size > bi.config.Segment.MaxStoreBytes {
+		if err := bi.newStore(0); err != nil {
+			return roolback(err)
+		}
+	}
+	data, err := item.Value()
+	if err != nil {
+		return roolback(err)
+	}
+	item.storeId = int64(len(bi.stores))
+	item.storePos = bi.activeStore.size
+	if _, _, err := bi.activeStore.Append(data); err != nil {
+		return roolback(err)
+	}
+
+	return nil
+}
+
+func (bi *btreeIndex) Read(pk, sk string) (int64, error) {
+	item, _ := bi.tree.Get(&btreeItem{rawPk: pk, rawSk: sk})
+	if item == nil {
+		return 0, nil
+	}
+	return item.segmentId, nil
+}
+
+func (bi *btreeIndex) Close() error {
+	bi.mu.Lock()
+	defer bi.mu.Unlock()
+
+	for _, s := range bi.stores {
+		if err := s.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (bi *btreeIndex) getStore(id int64) *bstore {
@@ -102,7 +172,7 @@ func (bi *btreeIndex) newStore(storeId int64) error {
 	}
 	storeFile, err := os.OpenFile(
 		filepath.Join(bi.dir, fmt.Sprintf("%d.store", storeId)),
-		os.O_RDWR|os.O_CREATE|os.O_APPEND,
+		os.O_RDWR|os.O_CREATE,
 		0600,
 	)
 	if err != nil {
@@ -120,10 +190,6 @@ func (bi *btreeIndex) newStore(storeId int64) error {
 	return nil
 }
 
-const (
-	treeFlagWidth = 1
-)
-
 type bstore struct {
 	*store
 }
@@ -136,7 +202,7 @@ func (s *bstore) Delete(pos uint64) ([]byte, error) {
 	}
 
 	f := []byte{'1'}
-	if _, err := s.File.WriteAt(f, int64(pos+treeFlagWidth)); err != nil {
+	if _, err := s.WriteAt(f, int64(pos+lenWidth)); err != nil {
 		return nil, err
 	}
 	return f, nil

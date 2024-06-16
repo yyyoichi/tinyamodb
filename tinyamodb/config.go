@@ -2,7 +2,8 @@ package tinyamodb
 
 type Config struct {
 	Partition struct {
-		Num uint8
+		Num        uint8
+		IndexDgree int
 	}
 	Segment struct {
 		MaxStoreBytes uint64
