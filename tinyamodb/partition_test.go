@@ -1,6 +1,7 @@
 package tinyamodb
 
 import (
+	"io"
 	"os"
 	"testing"
 
@@ -17,11 +18,13 @@ func TestPartition(t *testing.T) {
 	var c Config
 	c.Segment.MaxIndexBytes = entwidth
 	c.Table.PartitionKey = "key"
+	c.Table.SortKey = "order"
 	p, err := newPartition(dir, PARTITION_ID, c)
 	require.NoError(t, err)
 
 	want0, err := newItem(map[string]types.AttributeValue{
 		"key":   &types.AttributeValueMemberS{Value: "key0"},
+		"order": &types.AttributeValueMemberS{Value: "00"},
 		"value": &types.AttributeValueMemberN{Value: "0"},
 	}, c)
 	require.NoError(t, err)
@@ -29,7 +32,8 @@ func TestPartition(t *testing.T) {
 	require.NoError(t, err)
 
 	want1, err := newItem(map[string]types.AttributeValue{
-		"key":   &types.AttributeValueMemberS{Value: "key1"},
+		"key":   &types.AttributeValueMemberS{Value: "key0"},
+		"order": &types.AttributeValueMemberS{Value: "01"},
 		"value": &types.AttributeValueMemberN{Value: "1"},
 	}, c)
 	require.NoError(t, err)
@@ -38,16 +42,21 @@ func TestPartition(t *testing.T) {
 	require.Equal(t, 2, len(p.segments))
 
 	got0, err := newItem(map[string]types.AttributeValue{
-		"key": &types.AttributeValueMemberS{Value: "key0"},
+		"key":   &types.AttributeValueMemberS{Value: "key0"},
+		"order": &types.AttributeValueMemberS{Value: "00"},
 	}, c)
 	require.NoError(t, err)
 	err = p.Read(got0)
 	require.NoError(t, err)
 	require.Equal(t, want0.UnixNano, got0.UnixNano)
+	_, err = p.readByBtree(got0)
+	require.NoError(t, err)
+	require.Equal(t, want0.UnixNano, got0.UnixNano)
 
 	// not found
 	got2, err := newItem(map[string]types.AttributeValue{
-		"key": &types.AttributeValueMemberS{Value: "key2"},
+		"key":   &types.AttributeValueMemberS{Value: "key0"},
+		"order": &types.AttributeValueMemberS{Value: "02"},
 	}, c)
 	require.NoError(t, err)
 	err = p.Read(got2)
@@ -65,6 +74,7 @@ func TestPartition(t *testing.T) {
 	// overwrite
 	got0, _ = newItem(map[string]types.AttributeValue{
 		"key":   &types.AttributeValueMemberS{Value: "key0"},
+		"order": &types.AttributeValueMemberS{Value: "00"},
 		"value": &types.AttributeValueMemberN{Value: "0"},
 	}, c)
 	_, err = p.Put(got0)
@@ -75,6 +85,8 @@ func TestPartition(t *testing.T) {
 	_, err = p.Delete(want0)
 	require.NoError(t, err)
 	// read
+	_, err = p.readByBtree(want0)
+	require.NoError(t, err)
 	err = p.Read(want0)
-	require.Error(t, err)
+	require.ErrorIs(t, err, io.EOF)
 }

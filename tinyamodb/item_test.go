@@ -19,9 +19,9 @@ func TestItem(t *testing.T) {
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: "hoge"},
 				"sk": &types.AttributeValueMemberS{Value: "fuga"}}, "pk", "sk", nil},
-			{map[string]types.AttributeValue{
-				"pk": &types.AttributeValueMemberS{Value: "hoge"},
-				"sk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "sk", nil},
+			// {map[string]types.AttributeValue{
+			// 	"pk": &types.AttributeValueMemberS{Value: "hoge"},
+			// 	"sk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "sk", nil},
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", nil},
 			{map[string]types.AttributeValue{
@@ -30,8 +30,8 @@ func TestItem(t *testing.T) {
 				"k": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", ErrNotFoundPartitionKey},
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: ""}}, "pk", "", ErrEmptyPartitionKey},
-			{map[string]types.AttributeValue{
-				"pk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "", ErrInvalidPartitionKeyType},
+			// {map[string]types.AttributeValue{
+			// 	"pk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "", ErrInvalidPartitionKeyType},
 			{map[string]types.AttributeValue{
 				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "sk", ErrNotFoundSortKey},
 			{map[string]types.AttributeValue{

@@ -35,13 +35,13 @@ var (
 )
 
 type item struct {
-	pk       types.AttributeValue
-	pkSHA256 string
-	Pk4bit   uint32
-	sk       types.AttributeValue
-	skSHA256 string
-	UnixNano int64
-	Item     map[string]types.AttributeValue
+	pk         *types.AttributeValueMemberS
+	pkSHA256   string
+	Pk4bit     uint32
+	sk         *types.AttributeValueMemberS
+	pkskSHA256 string
+	UnixNano   int64
+	Item       map[string]types.AttributeValue
 }
 
 func newItem(avm map[string]types.AttributeValue, c Config) (*item, error) {
@@ -49,56 +49,47 @@ func newItem(avm map[string]types.AttributeValue, c Config) (*item, error) {
 		Item:     avm,
 		UnixNano: time.Now().UnixNano(),
 	}
+	var pkAv, skAv types.AttributeValue
 	for key, v := range i.Item {
 		if key == c.Table.PartitionKey {
-			i.pk = v
+			pkAv = v
 		}
 		if key == c.Table.SortKey {
-			i.sk = v
+			skAv = v
 		}
 	}
-	if i.pk == nil {
+	if pkAv == nil {
 		return nil, ErrNotFoundPartitionKey
 	}
-	var pk []byte
-	if av, ok := (i.pk).(*types.AttributeValueMemberS); !ok {
+	var ok bool
+	if i.pk, ok = (pkAv).(*types.AttributeValueMemberS); !ok {
 		return nil, ErrInvalidPartitionKeyType
-	} else {
-		pk = []byte(av.Value)
 	}
-	if len(pk) == 0 {
+	if i.pk.Value == "" {
 		return nil, ErrEmptyPartitionKey
 	}
-	var partitionKey []byte
-	partitionKey, i.pkSHA256 = sum256(pk)
-	i.Pk4bit = binary.BigEndian.Uint32(partitionKey[:4])
+	pkSHA256, strPkSHA256 := sum256([]byte(i.pk.Value))
+	i.pkSHA256 = strPkSHA256
+	i.Pk4bit = binary.BigEndian.Uint32(pkSHA256[:4])
 
 	if c.Table.SortKey != "" {
-		if i.sk == nil {
+		if skAv == nil {
 			return nil, ErrNotFoundSortKey
 		}
-		var sk []byte
-		switch av := (i.sk).(type) {
-		case *types.AttributeValueMemberN:
-			sk = []byte(av.Value)
-
-		case *types.AttributeValueMemberS:
-			sk = []byte(av.Value)
-
-		default:
+		if i.sk, ok = (skAv).(*types.AttributeValueMemberS); !ok {
 			return nil, ErrInvalidSortKeyType
 		}
-		if len(sk) == 0 {
+		if i.sk.Value == "" {
 			return nil, ErrEmptySortKey
 		}
-		_, i.skSHA256 = sum256(sk)
+		_, i.pkskSHA256 = joinStrSum256(i.pk.Value, i.sk.Value)
 	}
 	return i, nil
 }
 
 func (i *item) PrimaryKey() string {
-	if i.skSHA256 != "" {
-		return i.skSHA256
+	if i.pkskSHA256 != "" {
+		return i.pkskSHA256
 	}
 	return i.pkSHA256
 }
@@ -546,6 +537,14 @@ func (d *decoder) decodeLen(r io.Reader) (int, error) {
 		return 0, err
 	}
 	return int(bl[0]), nil
+}
+
+func joinStrSum256(s0, s1 string) (sha256Key []byte, strSha256Key string) {
+	var b0, b1 = []byte(s0), []byte(s1)
+	var b = make([]byte, len(b0)+len(b1))
+	_ = copy(b, b0)
+	_ = copy(b[len(b0):], b1)
+	return sum256(b)
 }
 
 func sum256(data []byte) (sha256Key []byte, strSha256Key string) {

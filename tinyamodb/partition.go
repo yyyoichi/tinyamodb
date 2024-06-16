@@ -16,6 +16,7 @@ type partition struct {
 	dir    string
 	config Config
 
+	btreeIndex    *btreeIndex
 	activeSegment *segment
 	segments      []*segment
 }
@@ -64,7 +65,19 @@ func (p *partition) Delete(item *item) (*item, error) {
 			return nil, err
 		}
 	}
-	return nil, nil
+	if p.config.Table.SortKey == "" {
+		return nil, nil
+	}
+
+	segId, err := p.btreeIndex.Delete(item.pk.Value, item.sk.Value)
+	if err != nil {
+		return nil, err
+	}
+	if segId == 0 {
+		return nil, err
+	}
+	s := p.getSegment(segId)
+	return nil, s.Delete(item.PrimaryKey())
 }
 
 func (p *partition) Close() error {
@@ -95,6 +108,22 @@ func (p *partition) read(item *item) (*segment, error) {
 	return nil, io.EOF
 }
 
+func (p *partition) readByBtree(item *item) (*segment, error) {
+	segId, _ := p.btreeIndex.Read(item.pk.Value, item.sk.Value)
+	if segId == 0 {
+		return nil, nil
+	}
+	s := p.getSegment(segId)
+	_, key := joinStrSum256(item.pk.Value, item.sk.Value)
+	data, _ := s.Read(key)
+	if len(data) > 0 {
+		if err := item.Unmarshal(data); err == nil {
+			return s, nil
+		}
+	}
+	return nil, io.EOF
+}
+
 func (p *partition) write(item *item) error {
 	if p.activeSegment.IsMaxed() {
 		if err := p.newSegment(0); err != nil {
@@ -107,7 +136,23 @@ func (p *partition) write(item *item) error {
 	if err != nil {
 		return err
 	}
-	return p.activeSegment.Write(key, data)
+	if err = p.activeSegment.Write(key, data); err != nil {
+		return err
+	}
+
+	if p.config.Table.SortKey == "" {
+		return nil
+	}
+
+	// set btree index
+	if err = p.btreeIndex.Append(item.pk.Value, item.sk.Value, int64(len(p.segments))); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *partition) getSegment(id int64) *segment {
+	return p.segments[id-1]
 }
 
 func (p *partition) setup() error {
@@ -151,6 +196,12 @@ func (p *partition) setup() error {
 		if err := p.newSegment(0); err != nil {
 			return err
 		}
+	}
+
+	// setup btree
+	p.btreeIndex, err = newBtreeIndex(p.dir, p.config.Table.SortKey, p.config)
+	if err != nil {
+		return err
 	}
 	return nil
 }
