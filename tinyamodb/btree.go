@@ -62,7 +62,7 @@ func (bi *btreeIndex) Append(pk, sk string, segId int64) error {
 		segmentId: segId,
 	}
 	var old *btreeItem
-	roolback := func(err error) error {
+	rollback := func(err error) error {
 		if err != nil && old != nil {
 			_, _ = bi.tree.ReplaceOrInsert(old)
 		}
@@ -73,25 +73,44 @@ func (bi *btreeIndex) Append(pk, sk string, segId int64) error {
 		s := bi.getStore(old.storeId)
 		_, err := s.Delete(old.storePos)
 		if err != nil {
-			return roolback(err)
+			return rollback(err)
 		}
 	}
 	if bi.activeStore.size > bi.config.Segment.MaxStoreBytes {
 		if err := bi.newStore(0); err != nil {
-			return roolback(err)
+			return rollback(err)
 		}
 	}
 	data, err := item.Value()
 	if err != nil {
-		return roolback(err)
+		return rollback(err)
 	}
 	item.storeId = int64(len(bi.stores))
 	item.storePos = bi.activeStore.size
 	if _, _, err := bi.activeStore.Append(data); err != nil {
-		return roolback(err)
+		return rollback(err)
 	}
 
 	return nil
+}
+
+func (bi *btreeIndex) Delete(pk, sk string) (int64, error) {
+	item, _ := bi.tree.Delete(&btreeItem{rawPk: pk, rawSk: sk})
+	if item == nil {
+		return 0, nil
+	}
+	rollback := func(err error) error {
+		if err != nil {
+			_, _ = bi.tree.ReplaceOrInsert(item)
+		}
+		return err
+	}
+	s := bi.getStore(item.storeId)
+	_, err := s.Delete(item.storePos)
+	if err != nil {
+		return 0, rollback(err)
+	}
+	return item.segmentId, nil
 }
 
 func (bi *btreeIndex) Read(pk, sk string) (int64, error) {

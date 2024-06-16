@@ -57,5 +57,11 @@ func TestBtree(t *testing.T) {
 		require.EqualValues(t, 2, segId)
 		segId, _ = bi.Read("pk", "2")
 		require.EqualValues(t, 3, segId)
+
+		_, err = bi.Delete("pk", "2")
+		require.NoError(t, err)
+		segId, err = bi.Read("pk", "2")
+		require.NoError(t, err)
+		require.EqualValues(t, 0, segId)
 	})
 }
