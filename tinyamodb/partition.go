@@ -114,7 +114,7 @@ func (p *partition) readByBtree(item *item) (*segment, error) {
 		return nil, nil
 	}
 	s := p.getSegment(segId)
-	_, key := joinStrSum256(item.pk.Value, item.sk.Value)
+	key := item.PrimaryKey()
 	data, _ := s.Read(key)
 	if len(data) > 0 {
 		if err := item.Unmarshal(data); err == nil {
