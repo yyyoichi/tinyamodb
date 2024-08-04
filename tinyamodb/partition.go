@@ -65,19 +65,17 @@ func (p *partition) Delete(item *item) (*item, error) {
 			return nil, err
 		}
 	}
-	if p.config.Table.SortKey == "" {
-		return nil, nil
+
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
 	}
 
-	segId, err := p.btreeIndex.Delete(item.pk.Value, item.sk.Value)
+	_, err := p.btreeIndex.Delete(pk, sk)
 	if err != nil {
 		return nil, err
 	}
-	if segId == 0 {
-		return nil, err
-	}
-	s := p.getSegment(segId)
-	return nil, s.Delete(item.PrimaryKey())
+	return nil, nil
 }
 
 func (p *partition) Close() error {
@@ -89,39 +87,27 @@ func (p *partition) Close() error {
 			return err
 		}
 	}
-	return nil
+	return p.btreeIndex.Close()
 }
 
 func (p *partition) read(item *item) (*segment, error) {
-	key := item.PrimaryKey()
-
-	for _, s := range p.segments {
-		data, _ := s.Read(key)
-		if len(data) > 0 {
-			if err := item.Unmarshal(data); err == nil {
-				return s, nil
-			}
-		}
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
 	}
-	item.Item = nil
-	item.UnixNano = 0
-	return nil, io.EOF
-}
-
-func (p *partition) readByBtree(item *item) (*segment, error) {
-	segId, _ := p.btreeIndex.Read(item.pk.Value, item.sk.Value)
+	segId, _ := p.btreeIndex.Read(pk, sk)
 	if segId == 0 {
-		return nil, nil
+		return nil, io.EOF
 	}
 	s := p.getSegment(segId)
 	key := item.PrimaryKey()
 	data, _ := s.Read(key)
-	if len(data) > 0 {
-		if err := item.Unmarshal(data); err == nil {
-			return s, nil
-		}
+	if err := item.Unmarshal(data); err != nil {
+		item.Item = nil
+		item.UnixNano = 0
+		return nil, io.EOF
 	}
-	return nil, io.EOF
+	return s, nil
 }
 
 func (p *partition) write(item *item) error {
@@ -140,12 +126,13 @@ func (p *partition) write(item *item) error {
 		return err
 	}
 
-	if p.config.Table.SortKey == "" {
-		return nil
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
 	}
 
 	// set btree index
-	if err = p.btreeIndex.Append(item.pk.Value, item.sk.Value, int64(len(p.segments))); err != nil {
+	if err = p.btreeIndex.Append(pk, sk, int64(len(p.segments))); err != nil {
 		return err
 	}
 	return nil

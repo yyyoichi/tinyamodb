@@ -49,7 +49,7 @@ func TestPartition(t *testing.T) {
 	err = p.Read(got0)
 	require.NoError(t, err)
 	require.Equal(t, want0.UnixNano, got0.UnixNano)
-	_, err = p.readByBtree(got0)
+	err = p.Read(got0)
 	require.NoError(t, err)
 	require.Equal(t, want0.UnixNano, got0.UnixNano)
 
@@ -85,8 +85,8 @@ func TestPartition(t *testing.T) {
 	_, err = p.Delete(want0)
 	require.NoError(t, err)
 	// read
-	_, err = p.readByBtree(want0)
-	require.NoError(t, err)
+	err = p.Read(want0)
+	require.ErrorIs(t, err, io.EOF)
 	err = p.Read(want0)
 	require.ErrorIs(t, err, io.EOF)
 }
