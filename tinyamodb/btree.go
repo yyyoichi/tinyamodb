@@ -35,7 +35,7 @@ func newBtreeIndex(dir string, sortKey string, c Config) (*btreeIndex, error) {
 		c.Partition.IndexDgree = 3
 	}
 	bi := &btreeIndex{
-		dir:    fmt.Sprintf("%s/%s", dir, sortKey),
+		dir:    fmt.Sprintf("%s/b%s", dir, sortKey),
 		config: c,
 		tree: btree.NewG(c.Partition.IndexDgree, func(a, b *btreeItem) bool {
 			if a.rawPk < b.rawPk {

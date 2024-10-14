@@ -95,17 +95,23 @@ func (p *partition) read(item *item) (*segment, error) {
 	if p.config.Table.SortKey != "" {
 		sk = item.sk.Value
 	}
-	segId, _ := p.btreeIndex.Read(pk, sk)
+	segId, err := p.btreeIndex.Read(pk, sk)
+	if err != nil {
+		return nil, err
+	}
 	if segId == 0 {
 		return nil, io.EOF
 	}
 	s := p.getSegment(segId)
 	key := item.PrimaryKey()
-	data, _ := s.Read(key)
+	data, err := s.Read(key)
+	if err != nil {
+		return nil, err
+	}
 	if err := item.Unmarshal(data); err != nil {
 		item.Item = nil
 		item.UnixNano = 0
-		return nil, io.EOF
+		return nil, err
 	}
 	return s, nil
 }

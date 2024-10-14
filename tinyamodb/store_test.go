@@ -18,12 +18,19 @@ func TestStoreAppendRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
+	fname := f.Name()
+
 	s, err := newStore(f)
 	require.NoError(t, err)
 
 	testAppend(t, s)
 	testRead(t, s)
 	testReadAt(t, s)
+	err = s.Close()
+	require.NoError(t, err)
+
+	f, err = os.Open(fname)
+	require.NoError(t, err)
 
 	s, err = newStore(f)
 	require.NoError(t, err)
