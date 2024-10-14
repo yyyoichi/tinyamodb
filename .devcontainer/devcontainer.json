@@ -13,9 +13,6 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"golang.go",
-				"donjayamanne.githistory",
-				"eamodio.gitlens",
 				"DavidAnson.vscode-markdownlint"
 			]
 		}

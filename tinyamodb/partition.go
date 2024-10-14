@@ -16,6 +16,7 @@ type partition struct {
 	dir    string
 	config Config
 
+	btreeIndex    *btreeIndex
 	activeSegment *segment
 	segments      []*segment
 }
@@ -40,13 +41,13 @@ func newPartition(dir string, id int, c Config) (*partition, error) {
 	return p, p.setup()
 }
 
-func (p *partition) Put(item Item) (old Item, err error) {
+func (p *partition) Put(item *item) (old *item, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return nil, p.write(item)
 }
 
-func (p *partition) Read(item Item) error {
+func (p *partition) Read(item *item) error {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -54,15 +55,25 @@ func (p *partition) Read(item Item) error {
 	return err
 }
 
-func (p *partition) Delete(item Item) (Item, error) {
+func (p *partition) Delete(item *item) (*item, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	key := item.StrSHA2526Key()
+	key := item.PrimaryKey()
 	for _, s := range p.segments {
 		if err := s.Delete(key); err != nil {
 			return nil, err
 		}
+	}
+
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
+	}
+
+	_, err := p.btreeIndex.Delete(pk, sk)
+	if err != nil {
+		return nil, err
 	}
 	return nil, nil
 }
@@ -76,36 +87,65 @@ func (p *partition) Close() error {
 			return err
 		}
 	}
-	return nil
+	return p.btreeIndex.Close()
 }
 
-func (p *partition) read(item Item) (*segment, error) {
-	key := item.StrSHA2526Key()
-
-	for _, s := range p.segments {
-		data, _ := s.Read(key)
-		if len(data) > 0 {
-			if err := item.Unmarshal(data); err == nil {
-				return s, nil
-			}
-		}
+func (p *partition) read(item *item) (*segment, error) {
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
 	}
-	return nil, io.EOF
+	segId, err := p.btreeIndex.Read(pk, sk)
+	if err != nil {
+		return nil, err
+	}
+	if segId == 0 {
+		return nil, io.EOF
+	}
+	s := p.getSegment(segId)
+	key := item.PrimaryKey()
+	data, err := s.Read(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := item.Unmarshal(data); err != nil {
+		item.Item = nil
+		item.UnixNano = 0
+		return nil, err
+	}
+	return s, nil
 }
 
-func (p *partition) write(item Item) error {
+func (p *partition) write(item *item) error {
 	if p.activeSegment.IsMaxed() {
 		if err := p.newSegment(0); err != nil {
 			return err
 		}
 	}
 
-	key := item.StrSHA2526Key()
+	key := item.PrimaryKey()
 	data, err := item.Value()
 	if err != nil {
 		return err
 	}
-	return p.activeSegment.Write(key, data)
+	if err = p.activeSegment.Write(key, data); err != nil {
+		return err
+	}
+
+	var pk, sk string = item.pk.Value, ""
+	if p.config.Table.SortKey != "" {
+		sk = item.sk.Value
+	}
+
+	// set btree index
+	if err = p.btreeIndex.Append(pk, sk, int64(len(p.segments))); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *partition) getSegment(id int64) *segment {
+	return p.segments[id-1]
 }
 
 func (p *partition) setup() error {
@@ -149,6 +189,12 @@ func (p *partition) setup() error {
 		if err := p.newSegment(0); err != nil {
 			return err
 		}
+	}
+
+	// setup btree
+	p.btreeIndex, err = newBtreeIndex(p.dir, p.config.Table.SortKey, p.config)
+	if err != nil {
+		return err
 	}
 	return nil
 }

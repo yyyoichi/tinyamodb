@@ -1,6 +1,7 @@
 package tinyamodb
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -17,12 +18,19 @@ func TestStoreAppendRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
+	fname := f.Name()
+
 	s, err := newStore(f)
 	require.NoError(t, err)
 
 	testAppend(t, s)
 	testRead(t, s)
 	testReadAt(t, s)
+	err = s.Close()
+	require.NoError(t, err)
+
+	f, err = os.Open(fname)
+	require.NoError(t, err)
 
 	s, err = newStore(f)
 	require.NoError(t, err)
@@ -47,6 +55,12 @@ func testRead(t *testing.T, s *store) {
 		require.Equal(t, write, read)
 		pos += width
 	}
+	var count int
+	for read := range s.ReadAll(context.Background(), func(err error) { require.NoError(t, err) }) {
+		require.Equal(t, write, read.data)
+		count++
+	}
+	require.Equal(t, 3, count)
 }
 
 func testReadAt(t *testing.T, s *store) {

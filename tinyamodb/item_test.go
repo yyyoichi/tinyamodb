@@ -10,6 +10,46 @@ import (
 )
 
 func TestItem(t *testing.T) {
+	t.Run("new item", func(t *testing.T) {
+		test := []struct {
+			item               map[string]types.AttributeValue
+			configPK, configSK string
+			expErr             error
+		}{
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberS{Value: "fuga"}}, "pk", "sk", nil},
+			// {map[string]types.AttributeValue{
+			// 	"pk": &types.AttributeValueMemberS{Value: "hoge"},
+			// 	"sk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "sk", nil},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", nil},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", nil},
+			{map[string]types.AttributeValue{
+				"k": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "", ErrNotFoundPartitionKey},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: ""}}, "pk", "", ErrEmptyPartitionKey},
+			// {map[string]types.AttributeValue{
+			// 	"pk": &types.AttributeValueMemberN{Value: "1.00"}}, "pk", "", ErrInvalidPartitionKeyType},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"}}, "pk", "sk", ErrNotFoundSortKey},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberBOOL{Value: true}}, "pk", "sk", ErrInvalidSortKeyType},
+			{map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: "hoge"},
+				"sk": &types.AttributeValueMemberS{Value: ""}}, "pk", "sk", ErrEmptySortKey},
+		}
+		for _, tt := range test {
+			var c Config
+			c.Table.PartitionKey = tt.configPK
+			c.Table.SortKey = tt.configSK
+			_, err := newItem(tt.item, c)
+			require.ErrorIs(t, err, tt.expErr)
+		}
+	})
+
 	var e encoder
 	var d decoder
 
@@ -103,12 +143,18 @@ func TestItem(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				var b = new(bytes.Buffer)
 				var unixNano = time.Now().UnixNano()
-				err := e.Encode(tt, unixNano, b)
+				var bt byte = 'a'
+				var e = newEncoder(prefixInt64EncOption(unixNano), prefixByteEncOption(bt))
+				err := e.Encode(tt, b)
 				require.NoError(t, err)
-				got, gotUnixNano, err := d.Decode(b)
+				var gotUnixNano int64
+				var gotBt byte
+				var d = newDecoder(prefixInt64DecOption(&gotUnixNano), prefixByteDecOption(&gotBt))
+				got, err := d.Decode(b)
 				require.NoError(t, err)
 				require.Equal(t, tt, got)
 				require.Equal(t, gotUnixNano, unixNano)
+				require.Equal(t, gotBt, bt)
 			})
 		}
 	})

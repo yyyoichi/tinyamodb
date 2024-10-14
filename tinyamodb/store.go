@@ -2,7 +2,10 @@ package tinyamodb
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
+	"errors"
+	"io"
 	"os"
 	"sync"
 )
@@ -69,6 +72,38 @@ func (s *store) Read(pos uint64) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+type datapos struct {
+	data []byte
+	pos  uint64
+}
+
+func (s *store) ReadAll(ctx context.Context, errHandle func(err error)) <-chan datapos {
+	ch := make(chan datapos)
+	go func() {
+		defer close(ch)
+		var pos uint64
+		for {
+			d, err := s.Read(pos)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				errHandle(err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- datapos{d, pos}:
+				pos += uint64(len(d) + lenWidth)
+			}
+			if pos >= s.size {
+				return
+			}
+		}
+	}()
+	return ch
 }
 
 func (s *store) ReadAt(p []byte, off int64) (int, error) {

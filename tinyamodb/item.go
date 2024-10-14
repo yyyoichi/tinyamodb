@@ -27,66 +27,93 @@ type Item interface {
 var (
 	ErrNotFoundPartitionKey    = errors.New("not found partition key")
 	ErrInvalidPartitionKeyType = errors.New("partition key must be 'string' type")
+	ErrEmptyPartitionKey       = errors.New("partition key is empty")
+	ErrNotFoundSortKey         = errors.New("not found sort key")
+	ErrInvalidSortKeyType      = errors.New("partition key must be 'string' or 'number' type")
+	ErrEmptySortKey            = errors.New("sort key is empty")
 	ErrCannotUnmarshal         = errors.New("cannot unmarshal")
 )
 
-type tinyamodbItem struct {
-	sha256Key    []byte
-	strSha256Key string
-	Item         map[string]types.AttributeValue
-	UnixNano     int64
+type item struct {
+	pk         *types.AttributeValueMemberS
+	pkSHA256   string
+	Pk4bit     uint32
+	sk         *types.AttributeValueMemberS
+	pkskSHA256 string
+	UnixNano   int64
+	Item       map[string]types.AttributeValue
 }
 
-func NewTinyamoDbItem(item map[string]types.AttributeValue, c Config) (*tinyamodbItem, error) {
-	var av types.AttributeValue
-	for key, v := range item {
+func newItem(avm map[string]types.AttributeValue, c Config) (*item, error) {
+	var i = &item{
+		Item:     avm,
+		UnixNano: time.Now().UnixNano(),
+	}
+	var pkAv, skAv types.AttributeValue
+	for key, v := range i.Item {
 		if key == c.Table.PartitionKey {
-			av = v
-			break
+			pkAv = v
+		}
+		if key == c.Table.SortKey {
+			skAv = v
 		}
 	}
-	if av == nil {
+	if pkAv == nil {
 		return nil, ErrNotFoundPartitionKey
 	}
-	avs, ok := (av).(*types.AttributeValueMemberS)
-	if !ok {
+	var ok bool
+	if i.pk, ok = (pkAv).(*types.AttributeValueMemberS); !ok {
 		return nil, ErrInvalidPartitionKeyType
 	}
-	key, strKey := sum256([]byte(avs.Value))
-	return &tinyamodbItem{
-		sha256Key:    key,
-		strSha256Key: strKey,
-		Item:         item,
-		UnixNano:     time.Now().UnixNano(),
-	}, nil
+	if i.pk.Value == "" {
+		return nil, ErrEmptyPartitionKey
+	}
+	pkSHA256, strPkSHA256 := sum256([]byte(i.pk.Value))
+	i.pkSHA256 = strPkSHA256
+	i.Pk4bit = binary.BigEndian.Uint32(pkSHA256[:4])
+
+	if c.Table.SortKey != "" {
+		if skAv == nil {
+			return nil, ErrNotFoundSortKey
+		}
+		if i.sk, ok = (skAv).(*types.AttributeValueMemberS); !ok {
+			return nil, ErrInvalidSortKeyType
+		}
+		if i.sk.Value == "" {
+			return nil, ErrEmptySortKey
+		}
+		_, i.pkskSHA256 = joinStrSum256(i.pk.Value, i.sk.Value)
+	}
+	return i, nil
 }
 
-func (i *tinyamodbItem) SHA256Key() []byte {
-	return i.sha256Key
+func (i *item) PrimaryKey() string {
+	if i.pkskSHA256 != "" {
+		return i.pkskSHA256
+	}
+	return i.pkSHA256
 }
-func (i *tinyamodbItem) StrSHA2526Key() string {
-	return i.strSha256Key
-}
-func (i *tinyamodbItem) Value() ([]byte, error) {
+
+func (i *item) Value() ([]byte, error) {
 	var buf = new(bytes.Buffer)
-	var e encoder
-	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, i.UnixNano, buf)
+	var e = newEncoder(prefixInt64EncOption(i.UnixNano))
+	err := e.Encode(&types.AttributeValueMemberM{Value: i.Item}, buf)
 	if err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
-func (i *tinyamodbItem) Unmarshal(data []byte) error {
+
+func (i *item) Unmarshal(data []byte) error {
 	var r = bytes.NewReader(data)
-	var d decoder
-	av, unixNano, err := d.Decode(r)
+	var d = newDecoder(prefixInt64DecOption(&i.UnixNano))
+	av, err := d.Decode(r)
 	if err != nil {
 		return err
 	}
-	i.UnixNano = unixNano
 	avm, ok := av.(*types.AttributeValueMemberM)
 	if !ok {
-		return err
+		return ErrCannotUnmarshal
 	}
 	i.Item = avm.Value
 	return nil
@@ -105,11 +132,34 @@ const (
 	_bm = byte('m') // map
 )
 
-type encoder struct{}
+type encoder struct {
+	options []encodeOption
+}
 
-func (e *encoder) Encode(av types.AttributeValue, unixNano int64, w io.Writer) error {
-	if err := binary.Write(w, enc, uint64(unixNano)); err != nil {
+func newEncoder(opts ...encodeOption) encoder {
+	return encoder{options: opts}
+}
+
+type encodeOption func(io.Writer) error
+
+func prefixInt64EncOption(tm int64) encodeOption {
+	return func(w io.Writer) error {
+		return binary.Write(w, enc, uint64(tm))
+	}
+}
+
+func prefixByteEncOption(bt byte) encodeOption {
+	return func(w io.Writer) error {
+		_, err := w.Write([]byte{bt})
 		return err
+	}
+}
+
+func (e *encoder) Encode(av types.AttributeValue, w io.Writer) error {
+	for _, opt := range e.options {
+		if err := opt(w); err != nil {
+			return err
+		}
 	}
 	return e.encode(av, w)
 }
@@ -258,15 +308,51 @@ func (e *encoder) encodeMap(v map[string]types.AttributeValue, w io.Writer) erro
 	return nil
 }
 
-type decoder struct{}
+type decoder struct {
+	options []decodeOption
+}
 
-func (d *decoder) Decode(r io.Reader) (types.AttributeValue, int64, error) {
-	var unixNanoB = make([]byte, 8)
-	if _, err := r.Read(unixNanoB); err != nil {
-		return nil, 0, err
+func newDecoder(opts ...decodeOption) decoder {
+	return decoder{options: opts}
+}
+
+type decodeOption func(r io.Reader) error
+
+func prefixInt64DecOption(n *int64) decodeOption {
+	return func(r io.Reader) error {
+		if n == nil {
+			panic("n is nil")
+		}
+		var b8 = make([]byte, 8)
+		if _, err := r.Read(b8); err != nil {
+			return err
+		}
+		*n = int64(enc.Uint64(b8))
+		return nil
 	}
-	av, err := d.decode(r)
-	return av, int64(enc.Uint64(unixNanoB)), err
+}
+
+func prefixByteDecOption(bt *byte) decodeOption {
+	return func(r io.Reader) error {
+		if bt == nil {
+			panic("bt is nil")
+		}
+		var b1 = make([]byte, 1)
+		if _, err := r.Read(b1); err != nil {
+			return err
+		}
+		*bt = b1[0]
+		return nil
+	}
+}
+
+func (d *decoder) Decode(r io.Reader) (types.AttributeValue, error) {
+	for _, opt := range d.options {
+		if err := opt(r); err != nil {
+			return nil, err
+		}
+	}
+	return d.decode(r)
 }
 
 func (d *decoder) decode(r io.Reader) (types.AttributeValue, error) {
@@ -451,6 +537,14 @@ func (d *decoder) decodeLen(r io.Reader) (int, error) {
 		return 0, err
 	}
 	return int(bl[0]), nil
+}
+
+func joinStrSum256(s0, s1 string) (sha256Key []byte, strSha256Key string) {
+	var b0, b1 = []byte(s0), []byte(s1)
+	var b = make([]byte, len(b0)+len(b1))
+	_ = copy(b, b0)
+	_ = copy(b[len(b0):], b1)
+	return sum256(b)
 }
 
 func sum256(data []byte) (sha256Key []byte, strSha256Key string) {
